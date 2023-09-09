@@ -1,7 +1,8 @@
+use std::rc::Rc;
+
 use miniz_oxide::deflate::{compress_to_vec, compress_to_vec_zlib};
 use miniz_oxide::inflate::{decompress_to_vec, decompress_to_vec_zlib};
 use rusty_leveldb::{Compressor, CompressorList, Options};
-use std::rc::Rc;
 
 struct ZlibCompressor(u8);
 
@@ -47,7 +48,7 @@ impl Compressor for RawZlibCompressor {
     }
 }
 
-pub fn bedrock_db_options(compression_level: u8) -> Options {
+pub fn create_bedrock_options(compression_level: u8) -> Options {
     let mut list = CompressorList::default();
     list.set_with_id(2, ZlibCompressor::new(compression_level));
     list.set_with_id(4, RawZlibCompressor::new(compression_level));
