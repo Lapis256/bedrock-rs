@@ -14,7 +14,7 @@ use zuri_nbt::{
 use self::{error::WorldError, level_dat::LevelData};
 use crate::{
     dynamic_property::DynamicProperties, entity::Entity, level_db::create_bedrock_options,
-    level_db::Iter,
+    level_db::Iter, map::Map,
 };
 
 pub struct World {
@@ -71,7 +71,7 @@ impl World {
         &self.path
     }
 
-    fn get_nbt_from_db(&mut self, key: &[u8]) -> Result<NBTTag, WorldError> {
+    fn get_nbt(&mut self, key: &[u8]) -> Result<NBTTag, WorldError> {
         let db = self.get_db_mut()?;
 
         let data = match db.get(key) {
@@ -81,10 +81,7 @@ impl World {
         NBTTag::read(&mut data.as_slice(), &mut LittleEndian).map_err(WorldError::NBTReadError)
     }
 
-    fn get_nbt_vec_from_db(
-        &mut self,
-        key_prefix: &[u8],
-    ) -> Result<HashMap<Vec<u8>, NBTTag>, WorldError> {
+    fn get_nbt_vec(&mut self, key_prefix: &[u8]) -> Result<HashMap<Vec<u8>, NBTTag>, WorldError> {
         let db = self.get_db_mut()?;
         let mut tags: HashMap<Vec<u8>, NBTTag> = HashMap::new();
         for (key, value) in Iter::from_db(db) {
@@ -97,12 +94,21 @@ impl World {
         Ok(tags)
     }
 
-    pub fn get_dynamic_properties(&mut self) -> Result<DynamicProperties, WorldError> {
-        deserialize(&self.get_nbt_from_db(b"DynamicProperties")?)
-            .map_err(WorldError::NBTDeserializeError)
+    fn put_nbt(&mut self, key: &[u8], nbt: &NBTTag) -> Result<(), WorldError> {
+        let db = self.get_db_mut()?;
+        let mut buf = Vec::new();
+        nbt.write(&mut buf, &mut LittleEndian)
+            .map_err(WorldError::NBTWriteError)?;
+        let _ = db.put(key, &buf);
+        let _ = db.flush();
+        Ok(())
     }
 
-    pub fn update_dynamic_properties(
+    pub fn get_dynamic_properties(&mut self) -> Result<DynamicProperties, WorldError> {
+        deserialize(&self.get_nbt(b"DynamicProperties")?).map_err(WorldError::NBTDeserializeError)
+    }
+
+    pub fn put_dynamic_properties(
         &mut self,
         properties: &DynamicProperties,
     ) -> Result<(), WorldError> {
@@ -118,16 +124,16 @@ impl World {
 
     pub fn get_local_player(&mut self) -> Result<Entity, WorldError> {
         let key = b"~local_player";
-        self.get_nbt_from_db(key)
+        self.get_nbt(key)
             .map(|nbt| Entity::new(key.to_vec(), nbt.try_into().unwrap()))
     }
 
-    pub fn update_local_player(&mut self, entity: &Entity) -> Result<(), WorldError> {
-        self.update_entity(entity)
+    pub fn put_local_player(&mut self, entity: &Entity) -> Result<(), WorldError> {
+        self.put_entity(entity)
     }
 
     pub fn get_entities(&mut self) -> Result<Vec<Entity>, WorldError> {
-        self.get_nbt_vec_from_db(b"actorprefix").map(|tags| {
+        self.get_nbt_vec(b"actorprefix").map(|tags| {
             Ok(tags
                 .into_iter()
                 .map(|(key, tag)| Entity::new(key, tag.try_into().unwrap()))
@@ -135,16 +141,21 @@ impl World {
         })?
     }
 
-    pub fn update_entity(&mut self, entity: &Entity) -> Result<(), WorldError> {
-        let db = self.get_db_mut()?;
-        let mut buf = Vec::new();
-        entity
-            .nbt
-            .clone()
-            .write(&mut buf, &mut LittleEndian)
-            .map_err(WorldError::NBTWriteError)?;
-        let _ = db.put(entity.get_db_key(), &buf);
-        let _ = db.flush();
+    pub fn put_entity(&mut self, entity: &Entity) -> Result<(), WorldError> {
+        let _ = self.put_nbt(entity.get_db_key(), &NBTTag::Compound(entity.nbt.clone()));
+        Ok(())
+    }
+
+    pub fn get_all_maps(&mut self) -> Result<Vec<Map>, WorldError> {
+        self.get_nbt_vec(b"map_")
+            .map(|tags| Ok(tags.into_values().map(Map::from).collect()))?
+    }
+
+    pub fn put_map(&mut self, map: &Map) -> Result<(), WorldError> {
+        let _ = self.put_nbt(
+            &map.get_db_key(),
+            &map.to_nbt().map_err(WorldError::NBTSerializeError)?,
+        );
         Ok(())
     }
 }
